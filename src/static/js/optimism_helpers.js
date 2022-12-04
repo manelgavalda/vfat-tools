@@ -306,6 +306,10 @@ async function getOptimisticSaddleToken(App, saddle, address, stakingAddress, sw
 
 async function getOptimisticStoredToken(App, tokenAddress, stakingAddress, type) {
   switch (type) {
+    case "curve":
+      const crv = new ethcall.Contract(tokenAddress, CURVE_ABI);
+      const [minter] = await App.ethcallProvider.all([crv.minter()]);
+      return await getOptimisticCurveToken(App, crv, tokenAddress, stakingAddress, minter);
     case "uniswap":
       const pool = new ethcall.Contract(tokenAddress, UNI_ABI);
       return await getOptimisticUniPool(App, pool, tokenAddress, stakingAddress);
@@ -347,6 +351,15 @@ async function getOptimisticToken(App, tokenAddress, stakingAddress) {
     }
     const type = window.localStorage.getItem(tokenAddress);
     if (type) return getOptimisticStoredToken(App, tokenAddress, stakingAddress, type);
+    try {
+      const crv = new ethcall.Contract(tokenAddress, CURVE_ABI);
+      const [minter] = await App.ethcallProvider.all([crv.minter()]);
+      const res = await getOptimisticCurveToken(App, crv, tokenAddress, stakingAddress, minter);
+      window.localStorage.setItem(tokenAddress, "curve");
+      return res;
+    }
+    catch (err) {
+    }
     try {
       const gelato = new ethcall.Contract(tokenAddress, GELATO_ABI);
       const [gelatoFactory] = await App.ethcallProvider.all([gelato.GELATO()]);
@@ -440,6 +453,28 @@ async function getOptimisticToken(App, tokenAddress, stakingAddress) {
       console.log(err);
       console.log(`Couldn't match ${tokenAddress} to any known token type.`);
     }
+  }
+
+  async function getOptimisticCurveToken(App, curve, address, stakingAddress, minterAddress) {
+    const minter = new ethcall.Contract(minterAddress, MINTER_ABI)
+    const [virtualPrice, coin0] = await App.ethcallProvider.all([minter.get_virtual_price(), minter.coins(0)]);
+    const token = await getOptimisticToken(App, coin0, address);
+    const calls = [curve.decimals(), curve.balanceOf(stakingAddress), curve.balanceOf(App.YOUR_ADDRESS),
+    curve.name(), curve.symbol(), curve.totalSupply()];
+    const [decimals, staked, unstaked, name, symbol, totalSupply] = await App.ethcallProvider.all(calls);
+    return {
+      address,
+      name,
+      symbol,
+      totalSupply,
+      decimals: decimals,
+      staked: staked / 10 ** decimals,
+      unstaked: unstaked / 10 ** decimals,
+      contract: curve,
+      tokens: [address, coin0],
+      token,
+      virtualPrice: virtualPrice / 1e18
+    };
   }
 
 async function loadOptimisticSynthetixPoolInfo(App, tokens, prices, stakingAbi, stakingAddress,
@@ -620,7 +655,7 @@ async function loadOptimisticChefContract(App, tokens, prices, chef, chefAddress
   deathPoolIndices, claimFunction) {
   const chefContract = chef ?? new ethers.Contract(chefAddress, chefAbi, App.provider);
 
-  const poolCount = parseInt(await chefContract.poolLength(), 10);
+  const poolCount = parseInt(await chefContract.poolLength(), 10);e
   const totalAllocPoints = await chefContract.totalAllocPoint();
 
   _print(`<a href='https://arbiscan.io/address/${chefAddress}' target='_blank'>Staking Contract</a>`);
@@ -633,7 +668,7 @@ async function loadOptimisticChefContract(App, tokens, prices, chef, chefAddress
   const rewardsPerWeek = rewardsPerWeekFixed ??
     await chefContract.callStatic[rewardsPerBlockFunction]()
     / 10 ** rewardToken.decimals * 604800 / 13.5
-
+e
   const poolInfos = await Promise.all([...Array(poolCount).keys()].map(async (x) =>
     await getOptimisticPoolInfo(App, chefContract, chefAddress, x, pendingRewardsFunction)));
 
